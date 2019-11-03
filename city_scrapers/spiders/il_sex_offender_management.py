@@ -17,9 +17,15 @@ class IlSexOffenderManagementSpider(CityScrapersSpider):
         Change the `_parse_title`, `_parse_start`, etc methods to fit your scraping
         needs.
         """
-        for item in response.css(".meetings"):
+        for item in response.css(
+            ".soi-article-content #ctl00_PlaceHolderMain_ctl01__ControlWrapper_RichHtmlField ul > li"
+        ):
+            title = self._parse_title(item)
+            if not title:
+                continue
+
             meeting = Meeting(
-                title=self._parse_title(item),
+                title=title,
                 description=self._parse_description(item),
                 classification=self._parse_classification(item),
                 start=self._parse_start(item),
@@ -37,8 +43,15 @@ class IlSexOffenderManagementSpider(CityScrapersSpider):
             yield meeting
 
     def _parse_title(self, item):
-        """Parse or generate meeting title."""
-        return ""
+        """ Parses the meeting title from the IL Sex Offender Management Board.
+        The title can either be "Meeting Minutes" or "Meeting Agenda".
+        """
+        title = item.css("a::text").get()
+        if "Minutes" not in title and "Agenda" not in title:
+            return None
+
+        title = "Meeting {0}".format(title.split()[-1])
+        return title
 
     def _parse_description(self, item):
         """Parse or generate meeting description."""
