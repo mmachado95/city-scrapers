@@ -1,6 +1,13 @@
+import scrapy
+import re
+
 from city_scrapers_core.constants import NOT_CLASSIFIED
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
+
+from io import BytesIO
+
+from PyPDF2 import PdfFileReader
 
 
 class IlSexOffenderManagementSpider(CityScrapersSpider):
@@ -10,6 +17,10 @@ class IlSexOffenderManagementSpider(CityScrapersSpider):
     allowed_domains = ["www2.illinois.gov"]
     start_urls = ["https://www2.illinois.gov/idoc/Pages/SexOffenderManagementBoard.aspx"]
 
+    def __init__(self, *args, **kwargs):
+        self.meetings_link = {}
+        super().__init__(*args, **kwargs)
+
     def parse(self, response):
         """
         `parse` should always `yield` Meeting items.
@@ -17,41 +28,44 @@ class IlSexOffenderManagementSpider(CityScrapersSpider):
         Change the `_parse_title`, `_parse_start`, etc methods to fit your scraping
         needs.
         """
+        meeting_link = ""
+
         for item in response.css(
             ".soi-article-content #ctl00_PlaceHolderMain_ctl01__ControlWrapper_RichHtmlField ul > li"
         ):
-            title = self._parse_title(item)
-            if not title:
+            link = item.css("a")
+            title = link.css("*::text").get()
+            if "Minutes" not in title and "Agenda" not in title:
                 continue
 
-            meeting = Meeting(
-                title=title,
-                description=self._parse_description(item),
-                classification=self._parse_classification(item),
-                start=self._parse_start(item),
-                end=self._parse_end(item),
-                all_day=False,
-                time_notes=self._parse_time_notes(item),
-                location=self._parse_location(item),
-                links=self._parse_links(item),
-                source=self._parse_source(response),
-            )
+            meeting_link = link.attrib["href"]
+            self.meetings_link[title] = meeting_link
 
-            meeting["status"] = self._get_status(meeting)
-            meeting["id"] = self._get_id(meeting)
+        if not self.meetings_link:
+            raise ValueError("Required links not found")
 
-            yield meeting
+        yield scrapy.Request(
+            response.urljoin(meeting_link), callback=self._parse_meeting, dont_filter=True
+        )
+
+    def _parse_meeting(self, response):
+        """Parse PDF and yield to documents page"""
+        self._parse_meeting_pdf(response)
+
+    def _parse_meeting_pdf(self, response):
+        """Parse dates and details from schedule PDF"""
+        pdf_obj = PdfFileReader(BytesIO(response.body))
+        pdf_text = pdf_obj.getPage(0).extractText()
+        # Join lines where there's only a single character, then remove newline
+        clean_text = re.sub(r"(?<=[A-Z0-9:])\n", "", pdf_text, flags=re.M).replace("\n", " ")
+        # Remove duplicate spaces
+        clean_text = re.sub(r"\s+", " ", clean_text)
 
     def _parse_title(self, item):
         """ Parses the meeting title from the IL Sex Offender Management Board.
         The title can either be "Meeting Minutes" or "Meeting Agenda".
         """
-        title = item.css("a::text").get()
-        if "Minutes" not in title and "Agenda" not in title:
-            return None
-
-        title = "Meeting {0}".format(title.split()[-1])
-        return title
+        return ""
 
     def _parse_description(self, item):
         """Parse or generate meeting description."""
